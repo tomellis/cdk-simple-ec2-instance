@@ -1,2 +1,5 @@
 -e .
 aws-cdk.aws_autoscaling
+aws-cdk.aws-autoscaling
+aws-cdk-aws_elasticloadbalancingv2
+aws-cdk-aws-elasticloadbalancing

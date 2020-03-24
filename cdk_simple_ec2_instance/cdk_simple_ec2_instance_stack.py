@@ -2,6 +2,7 @@ from aws_cdk import (
     aws_autoscaling as autoscaling,
     aws_ec2 as ec2,
     aws_elasticloadbalancingv2 as elbv2,
+    aws_elasticloadbalancing as elb,
     core,
 )
 
@@ -85,3 +86,73 @@ class CdkSimpleUbuntuInstanceAsg(core.Stack):
         )
         host.allow_ssh_access_from(ec2.Peer.ipv4("0.0.0.0/0")) # Restrict this to your IP
         host.instance.instance.add_property_override("KeyName", keypair) # Add keypair for access unless you use SSM
+
+class NLBStack(core.Stack):
+    def __init__(self, app: core.App, id: str, **kwargs) -> None:
+        super().__init__(app, id, **kwargs)
+
+        vpc = ec2.Vpc(self, "VPC")
+
+        # Security group for our test instance
+        my_sg = ec2.SecurityGroup(
+            self,
+            "my_sg",
+            vpc = vpc,
+            description="My sg for testing",
+            allow_all_outbound = True
+        )
+        # Add ssh from anywhere
+        my_sg.add_ingress_rule(
+            ec2.Peer.any_ipv4(),
+            ec2.Port.tcp(22),
+            "Allow ssh access from anywhere"
+        )
+
+        asg = autoscaling.AutoScalingGroup(
+            self, "ASG",
+            vpc=vpc,
+            instance_type=ec2.InstanceType.of(
+                ec2.InstanceClass.BURSTABLE2, ec2.InstanceSize.MICRO
+            ),
+            machine_image=ec2.AmazonLinuxImage(),
+        )
+        asg.add_security_group(my_sg) # add our security group, expects object
+
+        ## Classic Elastic Load Balancer
+        #lb = elb.LoadBalancer(
+        #    self, "ELB",
+        #    vpc=vpc,
+        #    internet_facing=True,
+        #    health_check={"port": 22}
+        #)
+        #lb.add_target(asg)
+        #
+        #listener = lb.add_listener(
+        #    external_port=8000,
+        #    external_protocol=elb.LoadBalancingProtocol.TCP,
+        #    internal_port=22,
+        #    internal_protocol=elb.LoadBalancingProtocol.TCP
+        #)
+        #listener.connections.allow_default_port_from_any_ipv4("Open to the world")
+
+        # Network Load Balancer
+        nlb = elbv2.NetworkLoadBalancer(
+            self, "NLB",
+            vpc=vpc,
+            internet_facing=True,
+            cross_zone_enabled=True,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC)
+        )
+
+        my_target = elbv2.NetworkTargetGroup(
+            self, "MyTargetGroup",
+            port=22,
+            vpc=vpc
+        )
+
+        listener = nlb.add_listener(
+            "Listener",
+            port=8000,
+            default_target_groups=[my_target]
+        )
+        my_target.add_target(asg)
